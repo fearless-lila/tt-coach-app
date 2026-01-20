@@ -45,13 +45,46 @@ def recommend(query: str, top_k: int = 5, context: dict | None = None):
         "chosen": chosen,
     }
 
+def simulate_reward(chosen_id: str) -> float:
+    """
+    MVP reward signal.
+    Pretend drill_003 is always the 'best' choice.
+    """
+    return 1.0 if chosen_id == "drill_003" else 0.0
+
+def train_loop(query: str, steps: int = 30):
+    search_engine = SearchEngine(mode="hybrid")
+    bandit = UCB1Bandit()
+
+    counts: dict[str, int] = {}
+
+    for i in range(steps):
+        results = search_engine.search(query, top_k=5)
+        candidates = [r.id for r in results]
+
+        chosen = bandit.select(candidates)
+        reward = simulate_reward(chosen)
+
+        bandit.update(chosen, reward)
+
+        counts[chosen] = counts.get(chosen, 0) + 1
+
+    return counts
+
+def simulate_feedback(chosen: dict) -> float:
+    """
+    MVP feedback: return a reward in [0, 1].
+    Later this becomes real user input (1-5 rating) or completion signal.
+    """
+    # Simple heuristic: if difficulty matches skill, reward higher
+    # (This is just to prove the learning loop works.)
+    return 1.0
 
 
 if __name__ == "__main__":
-    out = recommend(
-        "banana flick short serve",
-        top_k=5,
-        context={"skill": "intermediate"}
-    )
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    counts = train_loop("banana flick short serve", steps=40)
+    print("\nSelection counts after training:")
+    for k, v in sorted(counts.items(), key=lambda x: -x[1]):
+        print(f"{k}: {v}")
+
 
