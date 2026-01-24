@@ -16,6 +16,24 @@ from tt_coach_app.state_paths import get_state_paths
 import uuid
 from tt_coach_app.session_log import AuditEvent, append_jsonl, utc_now_iso
 
+
+def bandit_snapshot(bandit, arm_ids: list[str]) -> dict[str, dict[str, float]]:
+    """
+    Return pulls + mean reward for the given arms.
+    """
+    snapshot: dict[str, dict[str, float]] = {}
+    for arm_id in arm_ids:
+        s = bandit.stats.get(arm_id)
+        if not s or s.pulls == 0:
+            snapshot[arm_id] = {"pulls": 0, "mean": 0.0}
+        else:
+            snapshot[arm_id] = {
+                "pulls": s.pulls,
+                "mean": s.total_reward / s.pulls,
+            }
+    return snapshot
+
+
 def build_or_load_bandit(project_root: Path) -> UCB1Bandit:
     paths = get_state_paths(project_root)
 
@@ -166,8 +184,28 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
 
     candidates: list[str] = [r.id for r in results]
 
+    # --- Step 19: Priors from search relevance (soft bias) ---
+    score_by_id: dict[str, float] = {r.id: float(r.score) for r in results}
+
+    scores = list(score_by_id.values())
+    s_min = min(scores) if scores else 0.0
+    s_max = max(scores) if scores else 1.0
+    denom = (s_max - s_min) if (s_max - s_min) > 1e-12 else 1.0
+
+    def prior_mean_fn(arm_id: str, _context: dict | None = None) -> float:
+        raw = score_by_id.get(arm_id, s_min)
+        return (raw - s_min) / denom  # normalized to [0, 1]
+
+    prior_pulls = 3  # gentle bias; increase to 5–10 for stronger bias
+    # --- end Step 19 ---
+
     bandit = build_or_load_bandit(project_root)
-    chosen_id = bandit.select(candidates, context=context)
+    chosen_id = bandit.select(
+        arm_ids=candidates,
+        context=context,
+        prior_mean_fn=prior_mean_fn,
+        prior_pulls=prior_pulls,
+    )
 
     # Print a simple UI to the terminal
     print("\nTop candidates (search order):")
@@ -175,7 +213,6 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
         mark = " <== chosen" if r.id == chosen_id else ""
         print(f"{idx:2d}. {r.id} | {r.title} | score={r.score:.3f}{mark}")
 
-    # --- Step 18: collect explicit feedback ---
     reward, feedback_raw = prompt_rating_1_to_5()
     feedback_source = "explicit_terminal_rating" if feedback_raw != "" else "explicit_terminal_skip"
 
@@ -199,7 +236,13 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
         chosen_id=chosen_id,
         reward=reward,
         context=context or {},
-        meta={"run_id": run_id},
+        meta={
+            "run_id": run_id,
+            "prior_pulls": prior_pulls,
+            "score_min": s_min,
+            "score_max": s_max,
+            "bandit_snapshot": bandit_snapshot(bandit, candidates),
+        },
         feedback_source=feedback_source,
         feedback_raw=feedback_raw,
     )
@@ -207,6 +250,7 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
 
     print(f"\nRecorded reward={reward:.2f} for chosen_id={chosen_id}")
     return chosen_id, reward
+
 
 if __name__ == "__main__":
     print("Terminal Feedback MVP (Step 18). Ctrl+C to exit.\n")
