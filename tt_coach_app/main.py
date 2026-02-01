@@ -53,7 +53,7 @@ def bandit_snapshot(bandit: UCB1Bandit, arm_ids: list[str]) -> dict[str, dict[st
             snapshot[arm_id] = {"pulls": 0, "mean": 0.0}
         else:
             snapshot[arm_id] = {
-                "pulls": float(s.pulls),
+                "pulls": int(s.pulls),
                 "mean": float(s.total_reward) / float(s.pulls),
             }
     return snapshot
@@ -107,20 +107,66 @@ def prompt_rating_1_to_5() -> tuple[float, str]:
                 return reward, raw
 
         print("Please enter a number 1-5, or press Enter to skip.")
+MIN_CONTEXT_PULLS = 10
+
+def global_bandit_state_path(paths) -> Path:
+    return paths.bandit_state.parent / "bandit_state__global.json"
+
+def build_or_load_global_bandit(project_root: Path) -> UCB1Bandit:
+    paths = get_state_paths(project_root)
+    p = global_bandit_state_path(paths)
+
+    reset = os.getenv("RESET_BANDIT") == "1"
+    cold_start = os.getenv("COLD_START") == "1"
+
+    if reset:
+        b = UCB1Bandit()
+        b.save_json(str(p))
+        return b
+
+    if cold_start:
+        # Cold start: ignore existing state; caller decides whether to persist
+        return UCB1Bandit()
+
+    if p.exists():
+        return UCB1Bandit.load_json(str(p))
+
+    b = UCB1Bandit()
+    b.save_json(str(p))
+    return b
+
+
+def total_pulls_for_arms(bandit: UCB1Bandit, arm_ids: list[str]) -> int:
+    total = 0
+    for a in arm_ids:
+        s = bandit.stats.get(a)
+        total += s.pulls if s is not None else 0
+    return total
+
 
 
 def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None = None):
     project_root = Path(".").resolve()
     paths = get_state_paths(project_root)
+
     ctx = prompt_context()
     ctx_key = context_key(ctx)
-
 
     run_id = str(uuid.uuid4())
 
     search_engine = SearchEngine(mode="hybrid")
     results = search_engine.search(query, top_k=top_k)
     candidates: list[str] = [r.id for r in results]
+
+    # --- Step 23: load both bandits + decide backoff ---
+    ctx_bandit = build_or_load_bandit_for_context(project_root, ctx_key)
+    global_bandit = build_or_load_global_bandit(project_root)
+
+    ctx_total = total_pulls_for_arms(ctx_bandit, candidates)
+    use_global_backoff = ctx_total < MIN_CONTEXT_PULLS
+    decision_bandit = global_bandit if use_global_backoff else ctx_bandit
+    decision_scope = "global" if use_global_backoff else "context"
+    # --- end Step 23 ---
 
     # --- Step 19: Priors from search relevance (soft bias) ---
     score_by_id: dict[str, float] = {r.id: float(r.score) for r in results}
@@ -136,15 +182,16 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
     prior_pulls = 3
     # --- end Step 19 ---
 
-    bandit = build_or_load_bandit_for_context(project_root, ctx_key)
-    chosen_id = bandit.select(
+    # ✅ IMPORTANT: select using the decision bandit (global or context)
+    chosen_id = decision_bandit.select(
         arm_ids=candidates,
-        context=context,
+        context={"skill": ctx.skill, "goal": ctx.goal},
         prior_mean_fn=prior_mean_fn,
         prior_pulls=prior_pulls,
     )
 
     # Print a simple UI to the terminal
+    print(f"\nContext: skill={ctx.skill}, goal={ctx.goal} | decision_scope={decision_scope} | ctx_total_pulls={ctx_total}")
     print("\nTop candidates (search order):")
     for idx, r in enumerate(results, start=1):
         mark = " <== chosen" if r.id == chosen_id else ""
@@ -154,18 +201,20 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
     feedback_source = "explicit_terminal_rating" if feedback_raw != "" else "explicit_terminal_skip"
 
     # --- Step 20: persistence policy ---
-    # Cold start runs should NOT modify bandit_state.json
     persist_learning = os.getenv("COLD_START") != "1"
-
-    persist_learning = os.getenv("COLD_START") != "1"
-    state_path = bandit_state_path_for_context(paths, ctx_key)
-
-    bandit.update(chosen_id, reward)
-    if persist_learning:
-        bandit.save_json(str(state_path))
-
-
     # --- end Step 20 ---
+
+    # --- Step 23: update BOTH bandits (population + personalization) ---
+    ctx_state_path = bandit_state_path_for_context(paths, ctx_key)
+    global_state_path = global_bandit_state_path(paths)
+
+    ctx_bandit.update(chosen_id, reward)
+    global_bandit.update(chosen_id, reward)
+
+    if persist_learning:
+        ctx_bandit.save_json(str(ctx_state_path))
+        global_bandit.save_json(str(global_state_path))
+    # --- end Step 23 ---
 
     # Audit log
     candidate_payload = [
@@ -186,22 +235,28 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
         meta={
             "run_id": run_id,
             "context_key": ctx_key,
-            "bandit_state_file": str(state_path.name),
+            "decision_scope": decision_scope,
+            "context_total_pulls": ctx_total,
+            "min_context_pulls": MIN_CONTEXT_PULLS,
+            "ctx_state_file": ctx_state_path.name,
+            "global_state_file": global_state_path.name,
             "prior_pulls": prior_pulls,
             "score_min": s_min,
             "score_max": s_max,
             "cold_start": os.getenv("COLD_START") == "1",
             "persist_learning": persist_learning,
-            "bandit_snapshot": bandit_snapshot(bandit, candidates),
+            # snapshot AFTER update (fine for MVP)
+            "bandit_snapshot_ctx": bandit_snapshot(ctx_bandit, candidates),
+            "bandit_snapshot_global": bandit_snapshot(global_bandit, candidates),
         },
         feedback_source=feedback_source,
         feedback_raw=feedback_raw,
     )
 
     append_jsonl(paths.sessions_log, evt.to_dict())
-
     print(f"\nRecorded reward={reward:.2f} for chosen_id={chosen_id}")
     return chosen_id, reward
+
 
 
 def main() -> None:
