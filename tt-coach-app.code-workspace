@@ -1,0 +1,28 @@
+{
+  "folders": [
+    {
+      "name": "tt-coach-app",
+      "path": "."
+    },
+    {
+      "name": "table-tennis-multi-armed-bandit",
+      "path": "../table-tennis-multi-armed-bandit"
+    },
+    {
+      "name": "tt-semantic-search",
+      "path": "../tt-semantic-search"
+    },
+    {
+      "path": "../tt-bandit-notifications"
+    }
+  ],
+  "settings": {
+    "python.analysis.extraPaths": [
+      "../table-tennis-multi-armed-bandit",
+      "../tt-semantic-search"
+    ]
+  },
+  "extensions": {
+    "recommendations": []
+  }
+}
