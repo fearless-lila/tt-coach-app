@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TT Coach</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Local-first table tennis coach</p>
+        <h1>Search drills, get a recommendation, and train the system with feedback.</h1>
+        <p class="subcopy">
+          This browser MVP uses the same semantic search and bandit logic as the terminal app, just with a friendlier loop.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Recommendation Test</h2>
+            <p>Ask for a drill, choose your context, then rate the recommendation.</p>
+          </div>
+          <div id="stats" class="stats">Loading stats...</div>
+        </div>
+
+        <form id="recommend-form" class="recommend-form">
+          <label>
+            Query
+            <input id="query" name="query" type="text" placeholder="backhand topspin against block" required>
+          </label>
+
+          <div class="grid">
+            <label>
+              Skill
+              <select id="skill" name="skill">
+                <option value="beginner">Beginner</option>
+                <option value="intermediate" selected>Intermediate</option>
+                <option value="advanced">Advanced</option>
+              </select>
+            </label>
+
+            <label>
+              Goal
+              <select id="goal" name="goal">
+                <option value="backhand" selected>Backhand</option>
+                <option value="forehand">Forehand</option>
+                <option value="serve">Serve</option>
+                <option value="footwork">Footwork</option>
+                <option value="receive">Receive</option>
+              </select>
+            </label>
+          </div>
+
+          <button id="recommend-button" type="submit">Get Recommendation</button>
+        </form>
+      </section>
+
+      <section id="result-panel" class="panel hidden">
+        <div class="result-header">
+          <div>
+            <p class="eyebrow">Chosen drill</p>
+            <h2 id="chosen-title">-</h2>
+            <p id="chosen-meta" class="muted"></p>
+          </div>
+          <div id="scope-badge" class="scope-badge"></div>
+        </div>
+
+        <div class="candidates">
+          <div>
+            <h3>Search candidates</h3>
+            <ul id="candidate-list"></ul>
+          </div>
+          <div class="feedback">
+            <h3>Rate this recommendation</h3>
+            <p class="muted">Your rating is immediately logged and used to update the local bandit state.</p>
+            <div class="rating-row">
+              <button class="rating" data-rating="1" type="button">1</button>
+              <button class="rating" data-rating="2" type="button">2</button>
+              <button class="rating" data-rating="3" type="button">3</button>
+              <button class="rating" data-rating="4" type="button">4</button>
+              <button class="rating" data-rating="5" type="button">5</button>
+            </div>
+            <p id="feedback-status" class="feedback-status"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+  </html>

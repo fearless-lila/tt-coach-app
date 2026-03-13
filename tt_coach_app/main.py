@@ -5,12 +5,36 @@ import uuid
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from tt_coach_app.session_log import AuditEvent, append_jsonl, utc_now_iso
 from tt_coach_app.state_paths import get_state_paths
 from tt_semantic_search import SearchEngine
 
 from tt_bandit import UCB1Bandit
+
+
+@dataclass(frozen=True)
+class UserContext:
+    skill: str         # beginner | intermediate | advanced
+    goal: str          # backhand | forehand | serve | footwork | receive
+
+
+@dataclass(frozen=True)
+class RecommendationDecision:
+    run_id: str
+    query: str
+    top_k: int
+    mode: str
+    context: UserContext
+    context_key: str
+    decision_scope: str
+    context_total_pulls: int
+    prior_pulls: int
+    score_min: float
+    score_max: float
+    candidates: list[dict[str, Any]]
+    chosen_id: str
 
 
 def bandit_state_path_for_context(paths, ctx_key: str) -> Path:
@@ -144,32 +168,32 @@ def total_pulls_for_arms(bandit: UCB1Bandit, arm_ids: list[str]) -> int:
     return total
 
 
+def search_candidates(query: str, top_k: int = 5, mode: str = "hybrid") -> list[dict[str, Any]]:
+    search_engine = SearchEngine(mode=mode)
+    results = search_engine.search(query, top_k=top_k)
+    return [
+        {"id": r.id, "score": float(getattr(r, "score", 0.0)), "title": getattr(r, "title", r.id)}
+        for r in results
+    ]
 
-def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None = None):
+
+def recommend_drill(query: str, ctx: UserContext, top_k: int = 5, mode: str = "hybrid") -> RecommendationDecision:
     project_root = Path(".").resolve()
-    paths = get_state_paths(project_root)
-
-    ctx = prompt_context()
-    ctx_key = context_key(ctx)
 
     run_id = str(uuid.uuid4())
+    ctx_key = context_key(ctx)
+    candidates = search_candidates(query, top_k=top_k, mode=mode)
+    arm_ids = [c["id"] for c in candidates]
 
-    search_engine = SearchEngine(mode="hybrid")
-    results = search_engine.search(query, top_k=top_k)
-    candidates: list[str] = [r.id for r in results]
-
-    # --- Step 23: load both bandits + decide backoff ---
     ctx_bandit = build_or_load_bandit_for_context(project_root, ctx_key)
     global_bandit = build_or_load_global_bandit(project_root)
 
-    ctx_total = total_pulls_for_arms(ctx_bandit, candidates)
+    ctx_total = total_pulls_for_arms(ctx_bandit, arm_ids)
     use_global_backoff = ctx_total < MIN_CONTEXT_PULLS
     decision_bandit = global_bandit if use_global_backoff else ctx_bandit
     decision_scope = "global" if use_global_backoff else "context"
-    # --- end Step 23 ---
 
-    # --- Step 19: Priors from search relevance (soft bias) ---
-    score_by_id: dict[str, float] = {r.id: float(r.score) for r in results}
+    score_by_id: dict[str, float] = {c["id"]: float(c["score"]) for c in candidates}
     scores = list(score_by_id.values())
     s_min = min(scores) if scores else 0.0
     s_max = max(scores) if scores else 1.0
@@ -177,83 +201,112 @@ def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None 
 
     def prior_mean_fn(arm_id: str, _context: dict | None = None) -> float:
         raw = score_by_id.get(arm_id, s_min)
-        return (raw - s_min) / denom  # normalized to [0, 1]
+        return (raw - s_min) / denom
 
     prior_pulls = 3
-    # --- end Step 19 ---
-
-    # ✅ IMPORTANT: select using the decision bandit (global or context)
     chosen_id = decision_bandit.select(
-        arm_ids=candidates,
+        arm_ids=arm_ids,
         context={"skill": ctx.skill, "goal": ctx.goal},
         prior_mean_fn=prior_mean_fn,
         prior_pulls=prior_pulls,
     )
 
-    # Print a simple UI to the terminal
-    print(f"\nContext: skill={ctx.skill}, goal={ctx.goal} | decision_scope={decision_scope} | ctx_total_pulls={ctx_total}")
-    print("\nTop candidates (search order):")
-    for idx, r in enumerate(results, start=1):
-        mark = " <== chosen" if r.id == chosen_id else ""
-        print(f"{idx:2d}. {r.id} | {r.title} | score={r.score:.3f}{mark}")
+    return RecommendationDecision(
+        run_id=run_id,
+        query=query,
+        top_k=top_k,
+        mode=mode,
+        context=ctx,
+        context_key=ctx_key,
+        decision_scope=decision_scope,
+        context_total_pulls=ctx_total,
+        prior_pulls=prior_pulls,
+        score_min=s_min,
+        score_max=s_max,
+        candidates=candidates,
+        chosen_id=chosen_id,
+    )
 
-    reward, feedback_raw = prompt_rating_1_to_5()
-    feedback_source = "explicit_terminal_rating" if feedback_raw != "" else "explicit_terminal_skip"
 
-    # --- Step 20: persistence policy ---
+def record_feedback(
+    decision: RecommendationDecision,
+    reward: float,
+    feedback_source: str,
+    feedback_raw: str | None = None,
+) -> tuple[str, float]:
+    project_root = Path(".").resolve()
+    paths = get_state_paths(project_root)
+
     persist_learning = os.getenv("COLD_START") != "1"
-    # --- end Step 20 ---
 
-    # --- Step 23: update BOTH bandits (population + personalization) ---
-    ctx_state_path = bandit_state_path_for_context(paths, ctx_key)
+    ctx_state_path = bandit_state_path_for_context(paths, decision.context_key)
     global_state_path = global_bandit_state_path(paths)
+    ctx_bandit = build_or_load_bandit_for_context(project_root, decision.context_key)
+    global_bandit = build_or_load_global_bandit(project_root)
 
-    ctx_bandit.update(chosen_id, reward)
-    global_bandit.update(chosen_id, reward)
+    ctx_bandit.update(decision.chosen_id, reward)
+    global_bandit.update(decision.chosen_id, reward)
 
     if persist_learning:
         ctx_bandit.save_json(str(ctx_state_path))
         global_bandit.save_json(str(global_state_path))
-    # --- end Step 23 ---
-
-    # Audit log
-    candidate_payload = [
-        {"id": r.id, "score": getattr(r, "score", None), "title": getattr(r, "title", None)}
-        for r in results
-    ]
 
     evt = AuditEvent(
         ts_utc=utc_now_iso(),
         event="recommend_and_learn",
-        query=query,
-        mode="hybrid",
-        top_k=top_k,
-        candidates=candidate_payload,
-        chosen_id=chosen_id,
+        query=decision.query,
+        mode=decision.mode,
+        top_k=decision.top_k,
+        candidates=decision.candidates,
+        chosen_id=decision.chosen_id,
         reward=reward,
-        context={"skill": ctx.skill, "goal": ctx.goal},
+        context={"skill": decision.context.skill, "goal": decision.context.goal},
         meta={
-            "run_id": run_id,
-            "context_key": ctx_key,
-            "decision_scope": decision_scope,
-            "context_total_pulls": ctx_total,
+            "run_id": decision.run_id,
+            "context_key": decision.context_key,
+            "decision_scope": decision.decision_scope,
+            "context_total_pulls": decision.context_total_pulls,
             "min_context_pulls": MIN_CONTEXT_PULLS,
             "ctx_state_file": ctx_state_path.name,
             "global_state_file": global_state_path.name,
-            "prior_pulls": prior_pulls,
-            "score_min": s_min,
-            "score_max": s_max,
+            "prior_pulls": decision.prior_pulls,
+            "score_min": decision.score_min,
+            "score_max": decision.score_max,
             "cold_start": os.getenv("COLD_START") == "1",
             "persist_learning": persist_learning,
-            # snapshot AFTER update (fine for MVP)
-            "bandit_snapshot_ctx": bandit_snapshot(ctx_bandit, candidates),
-            "bandit_snapshot_global": bandit_snapshot(global_bandit, candidates),
+            "bandit_snapshot_ctx": bandit_snapshot(ctx_bandit, [c["id"] for c in decision.candidates]),
+            "bandit_snapshot_global": bandit_snapshot(global_bandit, [c["id"] for c in decision.candidates]),
         },
         feedback_source=feedback_source,
         feedback_raw=feedback_raw,
     )
-
     append_jsonl(paths.sessions_log, evt.to_dict())
+    return decision.chosen_id, reward
+
+
+
+def online_recommend_and_learn(query: str, top_k: int = 5, context: dict | None = None):
+    ctx = prompt_context()
+    decision = recommend_drill(query, ctx, top_k=top_k, mode="hybrid")
+
+    # Print a simple UI to the terminal
+    print(
+        f"\nContext: skill={ctx.skill}, goal={ctx.goal} | "
+        f"decision_scope={decision.decision_scope} | ctx_total_pulls={decision.context_total_pulls}"
+    )
+    print("\nTop candidates (search order):")
+    for idx, candidate in enumerate(decision.candidates, start=1):
+        mark = " <== chosen" if candidate["id"] == decision.chosen_id else ""
+        print(f"{idx:2d}. {candidate['id']} | {candidate['title']} | score={candidate['score']:.3f}{mark}")
+
+    reward, feedback_raw = prompt_rating_1_to_5()
+    feedback_source = "explicit_terminal_rating" if feedback_raw != "" else "explicit_terminal_skip"
+    chosen_id, reward = record_feedback(
+        decision,
+        reward=reward,
+        feedback_source=feedback_source,
+        feedback_raw=feedback_raw,
+    )
     print(f"\nRecorded reward={reward:.2f} for chosen_id={chosen_id}")
     return chosen_id, reward
 
@@ -282,11 +335,6 @@ def main() -> None:
         print("\nExiting.")
 
 
-@dataclass(frozen=True)
-class UserContext:
-    skill: str         # beginner | intermediate | advanced
-    goal: str          # backhand | forehand | serve | footwork | receive
-
 def prompt_context() -> UserContext:
     def pick(prompt: str, options: list[str], default: str) -> str:
         opts = "/".join(options)
@@ -314,4 +362,3 @@ def context_key(ctx: UserContext) -> str:
 
 if __name__ == "__main__":
     main()
-
