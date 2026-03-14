@@ -1,2 +1,9 @@
 # local learning state
 state/
+__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env
+frontend/.env.*
