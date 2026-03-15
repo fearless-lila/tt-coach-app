@@ -11,43 +11,53 @@
     <div id="intro-overlay">
         <div class="intro-content">
             <div class="anime-speed-lines"></div>
-            <div class="players-container">
-                <div class="player player-left">
-                    <svg viewBox="0 0 100 150" class="player-svg">
-                        <!-- Simplified one-line style player -->
-                        <path d="M50,30 Q55,10 60,30 Q60,50 50,70 L50,110 M50,70 L30,90 M50,70 L70,80" class="player-line" />
-                        <circle cx="50" cy="30" r="10" class="player-head-circle" />
-                        <g class="player-arm-left">
-                            <path d="M50,70 L80,60" class="player-line arm-line" />
-                            <circle cx="85" cy="55" r="8" class="player-racket" />
-                        </g>
+            <div class="animation-scene">
+                <!-- Detailed Table -->
+                <div class="table-container">
+                    <svg viewBox="0 0 400 300" class="table-svg">
+                        <!-- Legs -->
+                        <rect x="80" y="200" width="15" height="60" fill="#8d6e63" stroke="#000" stroke-width="3" />
+                        <rect x="130" y="180" width="10" height="40" fill="#8d6e63" stroke="#000" stroke-width="3" />
+                        <rect x="260" y="180" width="10" height="40" fill="#8d6e63" stroke="#000" stroke-width="3" />
+                        <rect x="305" y="200" width="15" height="60" fill="#8d6e63" stroke="#000" stroke-width="3" />
+                        
+                        <!-- Table Top (Perspective) -->
+                        <path d="M100,120 L300,120 L360,200 L40,200 Z" fill="#FFD93D" stroke="#000" stroke-width="4" />
+                        
+                        <!-- Table Lines (Boundary & Center) -->
+                        <path d="M108,125 L292,125 L345,195 L55,195 Z" fill="none" stroke="#fff" stroke-width="2.5" opacity="0.9" />
+                        <line x1="200" y1="120" x2="200" y2="200" stroke="#fff" stroke-width="2" opacity="0.9" />
+                        
+                        <!-- Net -->
+                        <rect x="40" y="150" width="320" height="25" fill="rgba(0,0,0,0.1)" stroke="#000" stroke-width="4" />
+                        <line x1="40" y1="155" x2="360" y2="155" stroke="#000" stroke-width="1" opacity="0.3" />
+                        <line x1="40" y1="160" x2="360" y2="160" stroke="#000" stroke-width="1" opacity="0.3" />
+                        <line x1="40" y1="165" x2="360" y2="165" stroke="#000" stroke-width="1" opacity="0.3" />
+                        <line x1="40" y1="170" x2="360" y2="170" stroke="#000" stroke-width="1" opacity="0.3" />
+                    </svg>
+                </div>
+
+                <!-- Rackets -->
+                <div class="racket racket-blue">
+                    <svg viewBox="0 0 100 100">
+                        <path d="M30,70 L10,90 Q5,95 10,100 L20,90 L40,70 Z" fill="#FFA500" stroke="#000" stroke-width="3" /> <!-- Handle -->
+                        <circle cx="60" cy="40" r="35" fill="#4DABFF" stroke="#000" stroke-width="4" /> <!-- Rubber -->
                     </svg>
                 </div>
                 
-                <div class="table-intro">
-                    <div class="table-net"></div>
+                <div class="racket racket-red">
+                    <svg viewBox="0 0 100 100">
+                        <path d="M70,70 L90,90 Q95,95 90,100 L80,90 L60,70 Z" fill="#FFA500" stroke="#000" stroke-width="3" /> <!-- Handle -->
+                        <circle cx="40" cy="40" r="35" fill="#FF3B30" stroke="#000" stroke-width="4" /> <!-- Rubber -->
+                    </svg>
                 </div>
-                
+
+                <!-- Ball -->
                 <div class="ping-pong-ball-intro"></div>
-                
-                <div class="player player-right">
-                    <svg viewBox="0 0 100 150" class="player-svg">
-                        <path d="M50,30 Q45,10 40,30 Q40,50 50,70 L50,110 M50,70 L70,90 M50,70 L30,80" class="player-line" />
-                        <circle cx="50" cy="30" r="10" class="player-head-circle" />
-                        <g class="player-arm-right">
-                            <path d="M50,70 L20,60" class="player-line arm-line" />
-                            <circle cx="15" cy="55" r="8" class="player-racket" />
-                        </g>
-                    </svg>
-                </div>
             </div>
             <div class="intro-text">SPINCOACH AI</div>
         </div>
-        <div class="curtain curtain-left"></div>
-        <div class="curtain curtain-right"></div>
     </div>
-
-    <div class="app-wrapper">
         <div class="rolling-ball ball-1"></div>
         <div class="rolling-ball ball-2"></div>
         

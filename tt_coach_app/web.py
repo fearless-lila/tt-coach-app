@@ -45,6 +45,79 @@ def recent_stats(limit: int = 100) -> dict[str, Any]:
     }
 
 
+def history_payload(limit: int = 10) -> dict[str, Any]:
+    paths = get_state_paths(Path(".").resolve())
+    if not paths.sessions_log.exists():
+        return {
+            "events": [],
+            "summary": {
+                "events": 0,
+                "avg_reward": 0.0,
+                "recent_avg_reward": 0.0,
+                "global_count": 0,
+                "context_count": 0,
+            },
+        }
+
+    raw = load_jsonl(paths.sessions_log, last=limit)
+    rows = to_event_rows(raw)
+    if not rows:
+        return {
+            "events": [],
+            "summary": {
+                "events": 0,
+                "avg_reward": 0.0,
+                "recent_avg_reward": 0.0,
+                "global_count": 0,
+                "context_count": 0,
+            },
+        }
+
+    events: list[dict[str, Any]] = []
+    global_count = 0
+    context_count = 0
+    rewards: list[float] = []
+
+    for record, row in zip(raw, rows):
+        if row.decision_scope == "global":
+            global_count += 1
+        elif row.decision_scope == "context":
+            context_count += 1
+
+        rewards.append(row.reward)
+        context = record.get("context") or {"skill": "unknown", "goal": "unknown"}
+        query = str(record.get("query") or "")
+        timestamp = str(record.get("ts_utc") or "")
+        candidates = record.get("candidates") or []
+        chosen_title = next(
+            (str(item.get("title")) for item in candidates if item.get("id") == row.chosen_id and item.get("title")),
+            row.chosen_id,
+        )
+
+        events.append(
+            {
+                "query": query,
+                "chosen_id": row.chosen_id,
+                "chosen_title": chosen_title,
+                "reward": row.reward,
+                "decision_scope": row.decision_scope,
+                "context": context,
+                "timestamp": timestamp,
+            }
+        )
+
+    return {
+        "events": events,
+        "summary": {
+            "events": len(rows),
+            "avg_reward": round(sum(rewards) / len(rewards), 3),
+            "recent_avg_reward": round(sum(rewards[-10:]) / len(rewards[-10:]), 3),
+            "global_count": global_count,
+            "context_count": context_count,
+        },
+    }
+
+
 class CoachHTTPRequestHandler(BaseHTTPRequestHandler):
     server_version = "TTCoachHTTP/0.1"
 
@@ -55,6 +128,9 @@ class CoachHTTPRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/stats":
             self._send_json(recent_stats())
+            return
+        if parsed.path == "/api/history":
+            self._send_json(history_payload())
             return
 
         asset_path = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")

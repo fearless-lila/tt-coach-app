@@ -36,24 +36,13 @@
     align-items: center;
     overflow: hidden;
     background: #fff;
+    transition: opacity 1s ease;
 }
 
-.curtain {
-    position: absolute;
-    top: 0;
-    width: 50%;
-    height: 100%;
-    background: var(--color-bg);
-    z-index: 10;
-    transition: transform 1s cubic-bezier(0.7, 0, 0.3, 1);
+#intro-overlay.reveal {
+    opacity: 0;
+    pointer-events: none;
 }
-
-.curtain-left { left: 0; border-right: 2px solid var(--color-primary); }
-.curtain-right { right: 0; border-left: 2px solid var(--color-primary); }
-
-#intro-overlay.reveal .curtain-left { transform: translateX(-100%); }
-#intro-overlay.reveal .curtain-right { transform: translateX(100%); }
-#intro-overlay.reveal .intro-content { opacity: 0; transition: opacity 0.5s ease; }
 
 .intro-content {
     position: relative;
@@ -64,7 +53,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    background: #fff;
+    background: transparent;
 }
 
 .anime-speed-lines {
@@ -76,146 +65,88 @@
     to { transform: scale(1.1); opacity: 0.8; }
 }
 
-.players-container {
+.animation-scene {
+    position: relative;
+    width: 600px;
+    height: 400px;
     display: flex;
-    align-items: center;
     justify-content: center;
-    gap: 150px;
-    margin-bottom: 3rem;
-    position: relative;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.table-container {
     width: 100%;
-    max-width: 500px;
+    height: 100%;
+    position: absolute;
+    z-index: 1;
 }
 
-.player {
-    width: 100px;
-    height: 150px;
-    position: relative;
-}
-
-.player-svg {
+.table-svg {
     width: 100%;
     height: 100%;
 }
 
-.player-line {
-    fill: none;
-    stroke: #333;
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+.racket {
+    position: absolute;
+    width: 80px;
+    height: 80px;
+    z-index: 10;
+    pointer-events: none;
 }
 
-.player-left .player-line, .player-left .player-head-circle {
-    stroke: #3498db; /* Blue Player */
+.racket-blue {
+    top: 60px;
+    left: 420px;
+    animation: racketBlueMove 1.6s ease-in-out infinite;
 }
 
-.player-left .player-racket {
-    fill: #3498db;
+.racket-red {
+    bottom: 60px;
+    left: 100px;
+    animation: racketRedMove 1.6s ease-in-out infinite;
 }
 
-.player-right .player-line, .player-right .player-head-circle {
-    stroke: #e74c3c; /* Red Player */
+@keyframes racketBlueMove {
+    0%, 40%, 60%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50% { transform: translate(-20px, 10px) rotate(-20deg); }
 }
 
-.player-right .player-racket {
-    fill: #e74c3c;
-}
-
-.player-head-circle {
-    fill: none;
-    stroke: #333;
-    stroke-width: 3;
-}
-
-.player-arm-left {
-    transform-origin: 50px 70px;
-    animation: armSwingLeft 0.8s ease-in-out infinite;
-}
-
-.player-arm-right {
-    transform-origin: 50px 70px;
-    animation: armSwingRight 0.8s ease-in-out infinite;
-}
-
-@keyframes armSwingLeft {
-    0%, 100% { transform: rotate(-10deg); }
-    50% { transform: rotate(-40deg); }
-}
-
-@keyframes armSwingRight {
-    0%, 100% { transform: rotate(10deg); }
-    50% { transform: rotate(40deg); }
+@keyframes racketRedMove {
+    0%, 100% { transform: translate(20px, -10px) rotate(20deg); }
+    10%, 90% { transform: translate(0, 0) rotate(0deg); }
 }
 
 .ping-pong-ball-intro {
-    width: 18px;
-    height: 18px;
-    background: #f1c40f; /* Colourful Ball (Yellow/Orange) */
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: #2ECC71; /* Vibrant Green */
     border-radius: 50%;
-    box-shadow: 0 0 10px rgba(241, 196, 15, 0.5), 0 0 20px rgba(241, 196, 15, 0.3);
-    animation: ballBounce 0.8s linear infinite;
-    z-index: 5;
+    border: 3px solid #000;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    z-index: 15;
+    animation: ballDetailedBounce 1.6s linear infinite;
 }
 
-@keyframes ballBounce {
-    0% { transform: translateX(-180px) translateY(0); }
-    25% { transform: translateX(-90px) translateY(-30px); }
-    50% { transform: translateX(180px) translateY(0); }
-    75% { transform: translateX(90px) translateY(-30px); }
-    100% { transform: translateX(-180px) translateY(0); }
-}
-
-/* Table Styles */
-.table-intro {
-    position: absolute;
-    bottom: 120px;
-    width: 400px;
-    height: 6px;
-    background: #27ae60; /* Green Table */
-    border-radius: 2px;
-    z-index: 1;
-    border: 2px solid #fff;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-}
-
-.table-net {
-    position: absolute;
-    top: -25px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 2px;
-    height: 25px;
-    background: #333;
-}
-
-/* Impact Effects */
-.ping-pong-ball-intro::after {
-    content: 'SPIN!';
-    position: absolute;
-    top: -30px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 1.2rem;
-    font-weight: 900;
-    color: #e67e22; /* Colourful Text */
-    opacity: 0;
-    animation: impactText 0.8s linear infinite;
-}
-
-@keyframes impactText {
-    0%, 45%, 55%, 100% { opacity: 0; transform: translateX(-50%) scale(0.5); }
-    0% { opacity: 1; transform: translateX(-50%) scale(1.2); }
-    50% { opacity: 1; transform: translateX(-50%) scale(1.2); }
+@keyframes ballDetailedBounce {
+    /* 0%: Hit by Red Racket (Bottom Left) */
+    0%, 100% { transform: translate(-180px, 100px) scale(1.2); }
+    /* 25%: Bounce on Table (Near side) */
+    25% { transform: translate(-50px, 40px) scale(1); }
+    /* 50%: Hit by Blue Racket (Top Right) */
+    50% { transform: translate(150px, -60px) scale(0.8); }
+    /* 75%: Bounce on Table (Far side) */
+    75% { transform: translate(50px, -20px) scale(0.9); }
 }
 
 .intro-text {
     font-family: var(--font-sans);
     font-size: 2.5rem;
     font-weight: 900;
-    color: #e67e22; /* Vibrant Orange */
+    color: var(--color-primary);
     letter-spacing: 8px;
-    text-shadow: 0 4px 10px rgba(230, 126, 34, 0.2);
+    text-shadow: 0 4px 10px rgba(255, 59, 48, 0.2);
     animation: pulseText 2s ease-in-out infinite;
 }
 
