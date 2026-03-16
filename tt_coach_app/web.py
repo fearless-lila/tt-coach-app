@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import mimetypes
 import os
 import threading
 from dataclasses import asdict
@@ -16,7 +15,6 @@ from tt_coach_app.main import RecommendationDecision, UserContext, recommend_dri
 from tt_coach_app.state_paths import get_state_paths
 
 
-STATIC_DIR = Path(__file__).resolve().parent / "web_static"
 PENDING_BY_RUN_ID: dict[str, RecommendationDecision] = {}
 PENDING_LOCK = threading.Lock()
 
@@ -59,9 +57,9 @@ def history_payload(limit: int = 10) -> dict[str, Any]:
             },
         }
 
-    raw = load_jsonl(paths.sessions_log, last=limit)
-    rows = to_event_rows(raw)
-    if not rows:
+    raw_all = load_jsonl(paths.sessions_log, last=None)
+    rows_all = to_event_rows(raw_all)
+    if not rows_all:
         return {
             "events": [],
             "summary": {
@@ -73,18 +71,11 @@ def history_payload(limit: int = 10) -> dict[str, Any]:
             },
         }
 
+    raw_recent = raw_all[-limit:]
+    rows_recent = rows_all[-limit:]
+
     events: list[dict[str, Any]] = []
-    global_count = 0
-    context_count = 0
-    rewards: list[float] = []
-
-    for record, row in zip(raw, rows):
-        if row.decision_scope == "global":
-            global_count += 1
-        elif row.decision_scope == "context":
-            context_count += 1
-
-        rewards.append(row.reward)
+    for record, row in zip(raw_recent, rows_recent):
         context = record.get("context") or {"skill": "unknown", "goal": "unknown"}
         query = str(record.get("query") or "")
         timestamp = str(record.get("ts_utc") or "")
@@ -106,10 +97,21 @@ def history_payload(limit: int = 10) -> dict[str, Any]:
             }
         )
 
+    global_count = 0
+    context_count = 0
+    rewards: list[float] = []
+    for row in rows_all:
+        if row.decision_scope == "global":
+            global_count += 1
+        elif row.decision_scope == "context":
+            context_count += 1
+
+        rewards.append(row.reward)
+
     return {
         "events": events,
         "summary": {
-            "events": len(rows),
+            "events": len(rows_all),
             "avg_reward": round(sum(rewards) / len(rewards), 3),
             "recent_avg_reward": round(sum(rewards[-10:]) / len(rewards[-10:]), 3),
             "global_count": global_count,
@@ -132,9 +134,15 @@ class CoachHTTPRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/history":
             self._send_json(history_payload())
             return
-
-        asset_path = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
-        self._serve_static(asset_path)
+        if parsed.path == "/":
+            self._send_json(
+                {
+                    "ok": True,
+                    "message": "TT Coach API is running. Start the frontend dev server and open http://127.0.0.1:3000.",
+                }
+            )
+            return
+        self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -241,20 +249,6 @@ class CoachHTTPRequestHandler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
             return {}
-
-    def _serve_static(self, asset_path: str) -> None:
-        target = (STATIC_DIR / asset_path).resolve()
-        if not str(target).startswith(str(STATIC_DIR.resolve())) or not target.exists() or not target.is_file():
-            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
-            return
-
-        content_type, _ = mimetypes.guess_type(str(target))
-        data = target.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type or "application/octet-stream")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
 
     def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload).encode("utf-8")

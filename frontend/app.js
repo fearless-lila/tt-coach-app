@@ -230,6 +230,12 @@ function renderHistory(data) {
     const { events, summary } = data;
     
     // Update Stats
+    updateStats({
+        events: summary.events,
+        avg_reward: summary.avg_reward,
+        recent_avg_reward: summary.recent_avg_reward
+    });
+
     elements.histEvents.textContent = summary.events;
     elements.histReward.textContent = summary.avg_reward.toFixed(2);
     elements.histExploration.textContent = `${summary.global_count}/${summary.context_count}`;
@@ -259,14 +265,19 @@ function renderHistory(data) {
                 </div>
             </div>
             <div class="history-reward" style="color: ${getRewardColor(event.reward)}">
-                ${event.reward > 0 ? (event.reward * 5).toFixed(0) + ' ⭐' : 'Pending'}
+                ${formatHistoryReward(event.reward)}
             </div>
         </div>
     `).join('');
 }
 
+function formatHistoryReward(reward) {
+    const rating = Math.round(reward * 4) + 1;
+    return `${rating} ⭐`;
+}
+
 function getRewardColor(reward) {
-    if (reward === 0) return 'var(--color-text-muted)';
+    if (reward <= 0.25) return 'var(--color-text-muted)';
     if (reward >= 0.8) return '#27ae60';
     if (reward >= 0.6) return '#f39c12';
     return 'var(--color-primary)';

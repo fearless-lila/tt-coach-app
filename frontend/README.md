@@ -1,20 +1,44 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# TT Coach Frontend
 
-# Run and deploy your AI Studio app
+This is the Vite frontend for the TT Coach app.
 
-This contains everything you need to run your app locally.
+The real backend API lives in the Python app at:
 
-View your app in AI Studio: https://ai.studio/apps/c048d079-89a5-45e4-b404-a2ce54a90b96
+- `tt_coach_app/web.py`
+
+The frontend talks to the backend through the Vite proxy configured in:
+
+- `vite.config.ts`
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+Start the Python backend from the repo root:
 
+```bash
+TT_COACH_PORT=8001 ./.venv/bin/python -m tt_coach_app.web
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Then start the frontend from this folder:
+
+```bash
+npm install
+npm run dev
+```
+
+Open the app at:
+
+```text
+http://127.0.0.1:3000
+```
+
+## API Endpoints Used
+
+- `POST /api/recommend`
+- `POST /api/feedback`
+- `GET /api/history`
+- `GET /api/stats`
+
+## Notes
+
+- This frontend replaces the older static UI that used to be served from the Python app.
+- The deleted AI Studio mock server is no longer used.
