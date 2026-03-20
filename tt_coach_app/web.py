@@ -195,6 +195,7 @@ class CoachHTTPRequestHandler(BaseHTTPRequestHandler):
                 "context": asdict(decision.context),
                 "decision_scope": decision.decision_scope,
                 "context_total_pulls": decision.context_total_pulls,
+                "prior_source": decision.prior_source,
                 "chosen_id": decision.chosen_id,
                 "chosen": chosen,
                 "candidates": decision.candidates,

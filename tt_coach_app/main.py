@@ -14,6 +14,9 @@ from tt_semantic_search import SearchEngine
 from tt_bandit import UCB1Bandit
 
 
+_SUPERVISED_PREDICTOR = None
+
+
 @dataclass(frozen=True)
 class UserContext:
     skill: str         # beginner | intermediate | advanced
@@ -31,10 +34,50 @@ class RecommendationDecision:
     decision_scope: str
     context_total_pulls: int
     prior_pulls: int
+    prior_source: str
     score_min: float
     score_max: float
     candidates: list[dict[str, Any]]
     chosen_id: str
+
+
+def load_supervised_predictor():
+    global _SUPERVISED_PREDICTOR
+    if _SUPERVISED_PREDICTOR is not None:
+        return _SUPERVISED_PREDICTOR
+
+    supervised_root = Path(__file__).resolve().parents[2] / "tt-supervised-learning"
+    model_path = supervised_root / "artifacts" / "model.joblib"
+    schema_path = supervised_root / "artifacts" / "schema.json"
+    predictor_path = supervised_root / "src"
+
+    if not model_path.exists() or not schema_path.exists():
+        return None
+
+    import sys
+
+    if str(predictor_path) not in sys.path:
+        sys.path.insert(0, str(predictor_path))
+
+    try:
+        from predictor import Predictor
+    except Exception:
+        return None
+
+    try:
+        _SUPERVISED_PREDICTOR = Predictor(model_path=model_path, schema_path=schema_path)
+    except Exception:
+        return None
+
+    return _SUPERVISED_PREDICTOR
+
+
+def build_supervised_features(arm_id: str, ctx: UserContext) -> dict[str, Any]:
+    return {
+        "drill_id": arm_id,
+        "focus": ctx.goal,
+        "skill_level": ctx.skill,
+    }
 
 
 def bandit_state_path_for_context(paths, ctx_key: str) -> Path:
@@ -198,12 +241,20 @@ def recommend_drill(query: str, ctx: UserContext, top_k: int = 5, mode: str = "h
     s_min = min(scores) if scores else 0.0
     s_max = max(scores) if scores else 1.0
     denom = (s_max - s_min) if (s_max - s_min) > 1e-12 else 1.0
+    predictor = load_supervised_predictor()
+    prior_source = "supervised" if predictor is not None else "search_score"
 
     def prior_mean_fn(arm_id: str, _context: dict | None = None) -> float:
+        if predictor is not None:
+            try:
+                return float(predictor.predict_rate_one(build_supervised_features(arm_id, ctx)))
+            except Exception:
+                pass
+
         raw = score_by_id.get(arm_id, s_min)
         return (raw - s_min) / denom
 
-    prior_pulls = 3
+    prior_pulls = 1 if predictor is not None else 3
     chosen_id = decision_bandit.select(
         arm_ids=arm_ids,
         context={"skill": ctx.skill, "goal": ctx.goal},
@@ -221,6 +272,7 @@ def recommend_drill(query: str, ctx: UserContext, top_k: int = 5, mode: str = "h
         decision_scope=decision_scope,
         context_total_pulls=ctx_total,
         prior_pulls=prior_pulls,
+        prior_source=prior_source,
         score_min=s_min,
         score_max=s_max,
         candidates=candidates,
@@ -270,6 +322,7 @@ def record_feedback(
             "ctx_state_file": ctx_state_path.name,
             "global_state_file": global_state_path.name,
             "prior_pulls": decision.prior_pulls,
+            "prior_source": decision.prior_source,
             "score_min": decision.score_min,
             "score_max": decision.score_max,
             "cold_start": os.getenv("COLD_START") == "1",
