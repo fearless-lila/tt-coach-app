@@ -8,6 +8,7 @@ In practical terms, this app:
 
 - accepts a user query and context
 - retrieves relevant drills using semantic search
+- uses an offline supervised model as a soft prior when available
 - chooses one recommendation using a contextual bandit
 - collects explicit feedback
 - keeps learning over time
@@ -33,8 +34,8 @@ The current system does this in four steps:
 
 1. The user enters a query and context
 2. Search retrieves relevant drills
-3. A contextual bandit selects one drill from those candidates
-4. The user rates the recommendation, and the system updates future choices
+3. An offline supervised model can provide a soft prior over those candidates
+4. A contextual bandit selects one drill and updates future choices from feedback
 
 Over time, this creates a recommendation loop that can:
 
@@ -84,6 +85,11 @@ It composes work from other repositories in the same workspace:
   - tracks pulls and rewards
   - supports contextual learning
 
+- `tt-supervised-learning`
+  - provides an offline supervised prior
+  - predicts likely usefulness for drill candidates before enough live data exists
+  - currently uses a reduced schema aligned with this app
+
 - `tt-bandit-notifications`
   - related future capability
   - not part of the active demo flow right now
@@ -101,6 +107,7 @@ So the mental model is:
 tt-coach-app = UI + API + orchestration
 tt-semantic-search = retrieval capability
 table-tennis-multi-armed-bandit = learning policy capability
+tt-supervised-learning = offline prediction prior
 tt-bandit-notifications = future delivery capability
 ```
 
@@ -180,16 +187,27 @@ This gives the app a reasonable cold-start behavior:
 - early on, use broader population-level learning
 - later, trust the user-specific context more
 
-### E. Search score is used as a prior
+### E. Offline supervised prior
 
-Search relevance is not ignored after retrieval.
+The app now supports an **offline supervised prior** trained in the `tt-supervised-learning` repo.
 
-The app converts candidate search scores into a soft prior, so the bandit begins with a bias toward more relevant drills while still being free to explore.
+That model currently uses a reduced feature schema aligned with the live coach app:
 
-This is important because it means:
+- `drill_id`
+- `focus`
+- `skill_level`
 
-- the system stays grounded in search relevance
-- but feedback can still overcome initial search ranking over time
+At recommendation time, the app builds those features for each candidate and predicts a soft usefulness score in `[0, 1]`.
+
+That predicted score becomes the bandit prior.
+
+This is useful because:
+
+- cold-start behavior is better than bandit-only learning
+- the app gets offline guidance before enough live feedback exists
+- real feedback can still override the prior over time
+
+If the supervised predictor is unavailable, the app falls back to the older search-score prior.
 
 ---
 
@@ -230,6 +248,16 @@ The choice to keep reward simple is intentional:
 ## 7. Learning state vs history log
 
 This repo separates learning from observability.
+
+The system now has two different learning layers:
+
+- **offline supervised learning**
+  - trained outside the request loop
+  - used as a soft prior
+
+- **online bandit learning**
+  - updated after each recommendation and rating
+  - used for live adaptation
 
 ### Learning state
 
