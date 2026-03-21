@@ -119,7 +119,7 @@ tt-bandit-notifications = future delivery capability
 
 ---
 
-## 5. Recommendation logic (actual behavior)
+## 5. Recommendation logic (actual behaviour)
 
 The recommendation loop in this repo works like this:
 
@@ -143,9 +143,349 @@ Example:
 
 ### B. Search retrieves candidates
 
-The app calls the semantic search capability and gets a ranked list of candidate drills.
+The app calls the `tt-semantic-search` capability in **hybrid mode** and gets a ranked list of candidate drills.
 
 This step ensures the recommendation remains tied to user intent.
+
+The retrieval code lives in the separate `tt-semantic-search` repo, but it is part of the live product behaviour here. In other words: the coach app owns the product flow, while the search repo owns the underlying retrieval implementation.
+
+When the coach app asks search for candidates, it gets back structured search results with:
+
+- `id`
+- `title`
+- `score`
+- metadata such as tags and difficulty
+
+Those results become the candidate set for the supervised prior and the contextual bandit.
+
+#### Search modes available in the search repo
+
+The underlying search capability supports:
+
+- `keyword`
+  - lexical matching
+  - deterministic baseline
+
+- `exact_keyword`
+  - strict lexical matching
+  - every original query token must appear in the drill text
+
+- `semantic`
+  - pure embedding similarity
+
+- `fuzzy_keyword`
+  - lexical matching with typo correction
+  - useful for misspellings or glued words
+
+- `auto`
+  - try `exact_keyword`
+  - then `keyword`
+  - then `fuzzy_keyword`
+
+- `hybrid`
+  - keyword candidate generation first
+  - semantic reranking second
+
+The coach app currently uses:
+
+```python
+SearchEngine(mode="hybrid")
+```
+
+So the user-facing product mode is `hybrid`, but the search repo still exposes the full keyword family because those modes are useful for:
+
+- debugging
+- regression testing
+- baseline comparisons
+- explicit typo-tolerant retrieval
+
+#### How the keyword family works
+
+Before semantic reranking happens, the search repo has a lexical pipeline that can operate in several modes.
+
+The flow is:
+
+1. normalise the raw query
+2. tokenize it into words
+3. optionally expand tokens using a small synonym map
+4. optionally correct misspellings
+5. score matching drill documents with a TF-IDF-style lexical score
+
+That means the keyword family is:
+
+- deterministic
+- transparent
+- model-free
+
+There is no embedding model involved in `exact_keyword`, `keyword`, `fuzzy_keyword`, or `auto`.
+
+#### Exact keyword mode
+
+`exact_keyword` is the strictest lexical mode.
+
+It uses the original query tokens only, not synonym-expanded tokens. A drill is only eligible if **all** of those original query tokens appear in the document terms.
+
+Example:
+
+```text
+backhand topspin
+```
+
+In strict mode, a document must contain both:
+
+- `backhand`
+- `topspin`
+
+If one of those is missing, the document is excluded before scoring.
+
+This is useful as:
+
+- a very interpretable baseline
+- a debugging tool
+- a safe first pass in `auto` mode
+
+#### Keyword mode
+
+`keyword` is the normal lexical baseline.
+
+It is still lexical search, but it is more forgiving than `exact_keyword` because it uses synonym-expanded tokens from the query-understanding layer.
+
+So a query like:
+
+```text
+banana flick short serve
+```
+
+can expand toward terms like:
+
+- `flick`
+- `banana-flick`
+- `short`
+- `serve`
+
+That makes the lexical candidate generator more robust before any semantic reranking begins.
+
+#### Fuzzy keyword mode
+
+`fuzzy_keyword` is still lexical search, but it adds typo correction before scoring.
+
+This mode is designed for cases like:
+
+- misspelled tokens
+- shorthand that does not exactly exist in the corpus
+- glued words such as `backhandflick`
+
+The fuzzy path can:
+
+- try to split a glued token into two valid terms
+- spell-correct individual tokens against the drill vocabulary
+
+So fuzzy search fits inside the keyword family as a typo-tolerant lexical fallback. It is not semantic search.
+
+#### Auto mode
+
+`auto` is a keyword-family router.
+
+It tries modes in this order:
+
+1. `exact_keyword`
+2. `keyword`
+3. `fuzzy_keyword`
+
+So it starts strict, then relaxes only when needed.
+
+That makes `auto` useful when you want a single lexical entrypoint that can degrade gracefully.
+
+#### How keyword scores are calculated
+
+All keyword-family modes use the same underlying TF-IDF-style lexical scoring once a document is eligible.
+
+In simplified form:
+
+```text
+score = sum over query terms of tf(term in doc) * idf(term)
+score = score / sqrt(document_length + 1)
+```
+
+Where:
+
+- `tf(term in doc) = 1 + log(count)` if the term appears
+- `idf(term) = log((N + 1) / (df + 1)) + 1`
+- the final division lightly normalises for document length
+
+So the keyword score is:
+
+- higher when more query terms appear
+- higher when terms appear more often
+- higher when those terms are rarer across the drill corpus
+- slightly reduced for very long documents
+
+This gives the lexical layer a simple, explainable relevance score without any learned ranking model.
+
+#### Embedding model
+
+The semantic layer uses:
+
+- `sentence-transformers`
+- model: `all-MiniLM-L6-v2`
+
+This model embeds:
+
+- each drill document
+- the user query
+
+into the same vector space, then compares them with cosine similarity.
+
+In practice, this is what lets the app match meaning rather than exact wording. A user does not need to type the exact drill title for the right candidate to surface.
+
+#### How hybrid search works in the product
+
+In the live coach app, the retrieval path is:
+
+1. User enters a query
+2. The keyword baseline generates a candidate set
+3. Candidate drills are embedded / compared semantically
+4. Candidates are reranked with a hybrid score
+5. Top candidates are returned to the coach app
+
+Current hybrid settings in the search repo:
+
+- `candidate_k = 20`
+- `alpha = 0.7`
+
+So the final hybrid score is approximately:
+
+```text
+final_score = 0.7 * semantic_score + 0.3 * normalised_keyword_score
+```
+
+This means the system behaves like:
+
+- keyword search defines what is allowed into the candidate pool
+- semantic similarity decides what best matches the meaning of the query
+
+In the current implementation, hybrid candidate generation uses the normal `keyword` mode, not `exact_keyword`, `fuzzy_keyword`, or `auto`.
+
+So the live product path is:
+
+- synonym-aware lexical candidate generation first
+- semantic reranking second
+
+The stricter and fuzzier keyword modes are available in the search capability, but they are not the default candidate generator in the coach app right now.
+
+#### Query understanding before scoring
+
+The search repo also does lightweight query understanding before keyword scoring.
+
+That includes:
+
+- normalisation
+- tokenization
+- synonym expansion
+- simple entity extraction
+
+Examples:
+
+- `bh` -> `backhand`
+- `banana` -> `flick`
+- `loop` <-> `topspin`
+- `underspin` <-> `backspin`
+
+This helps the app interpret user intent better before semantic reranking even happens.
+
+The query-understanding layer is intentionally small and inspectable. It is not a large language model rewriting the query. It is a compact rules-and-synonyms pass that makes the retrieval layer more robust without making it opaque.
+
+#### Fallback behaviour
+
+Hybrid search has an explicit fallback:
+
+- if keyword candidate generation returns nothing
+- the search layer falls back to **pure semantic search** over the full drill set
+
+So the product is more robust than a pure keyword search system.
+
+That matters because users do not always type neat drill names. They might enter:
+
+- shorthand
+- mixed terminology
+- misspelled phrases
+- intent-based descriptions instead of exact drill labels
+
+The system first tries to stay safe with keyword recall. If that path is too narrow, it still has a semantic-only fallback instead of returning nothing.
+
+#### Current drill catalogue available to search
+
+The current local drill corpus includes these items:
+
+- `drill_001` — Backhand topspin vs block (crosscourt)
+- `drill_002` — Forehand topspin vs block (crosscourt)
+- `drill_003` — Backhand flick against short serve
+- `drill_004` — Short push to short push (touch)
+- `drill_005` — Third-ball attack (serve + forehand loop)
+- `drill_006` — Third-ball attack (serve + backhand loop)
+- `drill_007` — Random placement blocking
+- `drill_008` — Serve practice: short backspin variations
+- `drill_009` — Serve receive: read spin and choose (push/flick)
+- `drill_010` — Footwork: Falkenberg (BH corner, FH corner, middle)
+
+These are the current “products” the search system is matching against when a user types a query.
+
+At the moment, the catalogue spans a few clear training clusters:
+
+- topspin consistency
+- serve receive and short-game touch
+- third-ball attack
+- serve practice
+- blocking and placement
+- footwork patterns
+
+So when a user searches, the system is not searching the internet or a giant vector database. It is searching this local curated drill set and trying to match the query to the most relevant training intent inside that set.
+
+#### Concrete example
+
+Example input:
+
+```text
+banana flick short serve
+```
+
+Typical reasoning path:
+
+- keyword layer finds serve-receive / short-ball candidates
+- synonym handling maps `banana` toward `flick`
+- semantic reranking boosts drills whose meaning matches a short-serve flick situation
+
+A likely strong result is:
+
+- `drill_003` — Backhand flick against short serve
+
+Why this is a good result:
+
+- `banana` is interpreted as a flick-style receive
+- `short serve` points toward over-the-table serve-receive drills
+- semantic similarity favors drills about the same game situation, not just generic backhand content
+
+So even though the user did not type the exact drill title, the system still surfaces the correct intention.
+
+Another example:
+
+```text
+backhand topspin
+```
+
+Typical strong candidates are:
+
+- `drill_001` — Backhand topspin vs block (crosscourt)
+- `drill_006` — Third-ball attack (serve + backhand loop)
+- `drill_003` — Backhand flick against short serve
+
+This shows the search layer doing the right kind of narrowing:
+
+- it keeps clearly relevant backhand attack content
+- it can include adjacent drills that are still meaningfully related
+- it removes obviously irrelevant options before the bandit makes a decision
+
+This is exactly the retrieval behaviour the coach app needs before personalisation begins.
 
 ### C. The bandit chooses one drill
 
@@ -182,7 +522,7 @@ The current switch rule is:
 - if the current context has fewer than `10` pulls across the current candidate set, use the **global** bandit
 - otherwise, use the **context** bandit
 
-This gives the app a reasonable cold-start behavior:
+This gives the app a reasonable cold-start behaviour:
 
 - early on, use broader population-level learning
 - later, trust the user-specific context more
@@ -203,7 +543,7 @@ That predicted score becomes the bandit prior.
 
 This is useful because:
 
-- cold-start behavior is better than bandit-only learning
+- cold-start behaviour is better than bandit-only learning
 - the app gets offline guidance before enough live feedback exists
 - real feedback can still override the prior over time
 
@@ -240,7 +580,7 @@ This reward is then written into:
 The choice to keep reward simple is intentional:
 
 - it keeps learning inspectable
-- it makes demo behavior easy to reason about
+- it makes demo behaviour easy to reason about
 - it avoids hidden heuristics
 
 ---
@@ -413,7 +753,7 @@ Check:
 ### History totals look frozen
 
 This was previously caused by summary logic using only recent rows.  
-Current behavior should:
+Current behaviour should:
 
 - show recent events in the list
 - compute summary from the full session log

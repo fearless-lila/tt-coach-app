@@ -14,6 +14,9 @@
     },
     {
       "path": "../tt-bandit-notifications"
+    },
+    {
+      "path": "../tt-supervised-learning"
     }
   ],
   "settings": {
