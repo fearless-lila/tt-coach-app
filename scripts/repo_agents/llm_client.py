@@ -13,7 +13,7 @@ SYSTEM_PROMPT = (
 
 
 def configured_model() -> str | None:
-    return os.getenv("REPO_AGENT_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL") or "llama3.2"
+    return os.getenv("REPO_AGENT_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL") or "llama3.2:latest"
 
 
 def answer_with_ollama(question: str, context: str) -> str:
